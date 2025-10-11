@@ -1,0 +1,2 @@
+# SPADE-Speculative-Decoding-for-Precise-and-Low-Cost-Distributed-Edge-Cloud-Inference
+SPADE's a distributed inference framework that integrates speculative decoding across edge and cloud. A compact draft model on edge generates candidate tokens; a large cloud verifier validates them in parallel. Accepted tokens are kept; only rejections invoke the verifier, cutting cloud queries and cost while preserving accuracy—no retraining.
