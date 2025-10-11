@@ -1,0 +1,690 @@
+# Usable
+'''
+    python inference2.py \
+        --device "cuda:0"
+
+'''
+
+# Installing dependencies
+
+# !pip install rich tqdm termcolor colorama "tokenizers>=0.19.1" "torch>=2.3.0" "transformers>=4.41.1" "accelerate>=0.30.1" "bitsandbytes>=0.43.1" optimum-quanto
+import random, time, math, os
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
+import warnings
+warnings.filterwarnings('ignore')
+
+# huggingface-cli login
+
+import abc
+import torch
+from torch import Tensor
+from torch.nn import functional as F
+
+
+class LogitsProcessor(abc.ABC):
+    """Logits processors for sampling."""
+
+    def __init__(self, temperature: float):
+        self.temperature = temperature
+
+    def __call__(self, logits: Tensor) -> Tensor:
+        proc = self._process(logits)
+        return F.softmax(proc / self.temperature, dim=-1)
+
+    @abc.abstractmethod
+    def _process(self, logits: Tensor) -> Tensor:
+        pass
+
+    @abc.abstractmethod
+    def sample(self, probs: Tensor) -> Tensor:
+        pass
+
+
+class GreedyProcessor(LogitsProcessor):
+    """Greedy: Most probable token."""
+
+    def __init__(self, temperature: float = 1):
+        super().__init__(temperature)
+
+    def _process(self, logits: Tensor) -> Tensor:
+        return logits
+
+    def sample(self, probs: Tensor) -> Tensor:
+        return torch.argmax(probs, dim=-1).unsqueeze(-1)
+
+
+
+''' Printing '''
+
+from typing import List, Tuple
+from rich import print
+from torch import Tensor
+
+
+def token_ids_to_string(token_ids, tokenizer):
+    """Convert token ids to string.
+
+    Args:
+        token_ids (List[int]): List of token ids.
+        tokenizer (Tokenizer): Tokenizer.
+
+    Returns:
+        str: String representation of token ids.
+    """
+    strings = tokenizer.convert_ids_to_tokens(token_ids)
+    return " ".join(strings)
+
+
+def end_token_found(location: int):
+    print(f"[red]End token found at position {location}[/red]")
+
+
+def initial_step(token: Tensor, tokenizer):
+    print(f"[white on grey]Initial Step[/white on grey] 1 token:")
+    print(f"[cyan]{token_ids_to_string(token, tokenizer)}[/cyan]")
+
+
+def speculative_step(
+    tokenizer,
+    current_inputs: Tensor,
+    inputs: Tensor,
+    n: int,
+    prompt_end: int,
+    current_position: int,
+    corrected_gamma: int,
+):
+    print(f"[white on grey]Speculative Step[/white on grey] {n} draft{'s' if n > 1 else ''} + 1 token:")
+    base_text = token_ids_to_string(inputs[0, prompt_end:current_position], tokenizer)
+    green_text = f"[green]{token_ids_to_string(inputs[0, current_position : current_position + n], tokenizer)}[/green]" if n > 0 else ""
+    red_text = f"[red]{token_ids_to_string(current_inputs[0, current_position + n : current_position + corrected_gamma], tokenizer)}[/red]" if n < corrected_gamma else ""
+    cyan_text = f"[cyan]{token_ids_to_string(inputs[..., current_position + n], tokenizer)}[/cyan]"
+    print(f"{base_text} {green_text} {red_text} {cyan_text}")
+
+
+''' Autoregressive_Method : Benchmark '''
+
+from math import inf
+import torch
+from torch.nn import Module
+from typing import List
+
+
+@torch.no_grad()
+def autoregressive_generate(
+    inputs: List[int],
+    model: Module,
+    max_gen_len: int = 40,
+    logits_processor: LogitsProcessor = GreedyProcessor(),
+    eos_tokens_id: int | List[int] = 1,
+    pad_token_id: int = 0,
+    # use_cache: bool = False,
+    # debug: bool = False,
+) -> List[int]:
+    """
+    Generate text sequence autoregressively based on the input sequence.
+
+    Args:
+        inputs (List[int]): input sequence of batch size 1.
+        model (Module): model to use for inference.
+        max_gen_len (int): maximum length of the generated sequence.
+        logits_processor (LogitsProcessor): logits processor for sampling.
+        eos_token_id (int): end token id.
+        pad_token_id (int): pad token id.
+        use_cache (bool): whether to use cache.
+
+    Returns:
+        List[int]: generated sequence.
+
+    Note:
+        This generation methods only works for decoder-only models.
+    """
+
+    prompt_len = len(inputs)
+    # prepare input tensor
+    max_seq_length = model.config.max_position_embeddings if hasattr(model.config, 'max_position_embeddings') else (model.config.max_context_length if hasattr(model.config, 'max_context_length') else 1024)
+    total_len = min(max_seq_length, prompt_len + max_gen_len)
+    input_ids = torch.full((1, total_len), pad_token_id, dtype=torch.long, device=model.device)
+    input_ids[0, :prompt_len] = torch.tensor(inputs, dtype=torch.long, device=model.device)
+
+    list_tokens_id = (
+        eos_tokens_id if isinstance(eos_tokens_id, list) else [eos_tokens_id]
+    )
+    stop_tokens = torch.tensor(list_tokens_id, dtype=torch.long, device=model.device)
+
+    for curr in range(prompt_len, total_len):
+        o = model(input_ids[..., :curr])
+        logits = o.logits[..., -1, :]  # [1, vocab_size]
+        probs = logits_processor(logits)  # [1, vocab_size]
+        x = logits_processor.sample(probs)  # [1, 1]
+        input_ids[0, curr] = x
+        
+
+        # check for end token
+        if torch.isin(x, stop_tokens):
+            break
+
+    return input_ids[0, prompt_len : curr + 1].tolist()
+
+
+
+
+# Speculative_Decoding
+
+import torch
+from torch.nn import Module
+from typing import List, Tuple
+
+
+def max_fn(x: torch.Tensor) -> torch.Tensor:
+    """
+    Max function.
+        x: input tensor.
+    Returns:
+        tensor norm(max(0, x)).
+    """
+    x_max = torch.where(x > 0, x, torch.zeros_like(x))
+    x_max_sum = torch.sum(x_max, dim=-1, keepdim=True)
+    return x_max / x_max_sum
+
+
+@torch.no_grad()
+def speculative_generate(
+    inputs: List[int],
+    drafter: Module,
+    target: Module,
+    tokenizer = None,
+    gamma: int = 5,
+    logits_processor: LogitsProcessor = GreedyProcessor(),
+    max_gen_len: int = 40,
+    eos_tokens_id: int | List[int] = 1,
+    pad_token_id: int = 0,
+    # use_cache: bool = False,
+    skip_sample_adjustment: bool = False,
+    first_target: bool = True,
+    # debug: bool = False,
+) -> Tuple[List[int], float, float]:
+    """
+    Generate text sequence using the speculative decoding algorithm.
+    Implementation of Speculative Decoding. (https://arxiv.org/pdf/2211.17192.pdf)
+
+    Args:
+        inputs (List[int]): input sequence of batch size 1.
+        drafter (Module): drafter model.
+        target (Module): target model.
+        tokenizer: tokenizer (used for debugging).
+        gamma (int): number of drafts generated by the drafter at each step.
+        logits_processor (LogitsProcessor): logits processor for sampling.
+        max_gen_len (int): maximum length of the generated sequence.
+        eos_tokens_id (int or List[int]): end token id (could be multiple).
+        pad_token_id (int): pad token id.
+        use_cache (bool): whether to use cache.
+        skip_sample_adjustment (bool): whether to skip the sample adjustment step when some drafts are discarded.
+        first_target (bool): whether to run the target model before the speculative algorithm.
+        debug (bool): debug mode.
+
+    Returns:
+        List[int]: generated sequence.
+        float: acceptance rate (number of accepted drafts divided by the number of total drafts).
+        float: number of target model calls.
+
+    Note: This generation methods only works for decoder-only models.
+    Note bis: The drafter and target models should output the same logits shape.
+
+    """
+
+    list_tokens_id = eos_tokens_id if isinstance(eos_tokens_id, list) else [eos_tokens_id]
+    stop_tokens = torch.tensor(list_tokens_id, dtype=torch.long, device=target.device).unsqueeze(1)
+
+    drafts_accepted, drafts_speculated = .0, .0
+
+    vocabulary_size = target.config.vocab_size
+
+    # prepare input tensor
+    prompt_len = len(inputs)
+    max_seq_length = target.config.max_position_embeddings if hasattr(target.config, 'max_position_embeddings') else (target.config.max_context_length if hasattr(target.config, 'max_context_length') else 1024)
+    total_len = min(max_seq_length, prompt_len + max_gen_len)
+    input_ids = torch.full((1, total_len), pad_token_id, dtype=torch.long, device=target.device)
+    input_ids[0, :prompt_len] = torch.tensor(inputs, dtype=torch.long, device=target.device)
+
+    current_position = prompt_len
+
+    target_calls = 0
+    if first_target:
+        # run the target model before the speculative algorithm. Allows to prefill the kvcache and get a first token.
+        Mp = target(
+            input_ids=input_ids[..., :current_position],
+        )
+        target_calls += 1
+        p_p = logits_processor(Mp.logits[..., -1, :])
+        t = logits_processor.sample(p_p)
+        input_ids[0, current_position] = t
+        current_position += 1
+
+        if torch.isin(t, stop_tokens):
+            return input_ids[0, prompt_len:current_position].tolist(), 0, target_calls
+
+
+    while current_position < total_len:
+        corrected_gamma = min(gamma, total_len - current_position - 1)
+        q = torch.zeros((1, corrected_gamma, vocabulary_size), device=target.device)
+
+        input_ids = input_ids.to(drafter.device)
+
+        # generate gamma drafts
+        for k in range(corrected_gamma):
+            Mq = drafter(input_ids=input_ids[..., :current_position + k],)
+            
+
+            draft_logits = Mq.logits[..., -1, :]
+            draft_probs = logits_processor(draft_logits)
+            q[0, k] = draft_probs.to(target.device)
+            xi = logits_processor.sample(draft_probs)
+            input_ids[0, current_position + k] = xi
+        drafts_speculated += corrected_gamma
+        input_ids = input_ids.to(target.device)
+
+        # run target model on drafts and get logits of the previous tokens plus one more token
+        Mp = target(
+            input_ids=input_ids[..., :current_position + corrected_gamma],)
+        target_calls += 1
+        
+        draft_logits = Mp.logits[..., current_position - 1:current_position + corrected_gamma - 1, :] # [1, corrected_gamma, vocab_size]
+        p = logits_processor(draft_logits) # [1, gamma, vocab_size]
+
+        # compute the last accepted draft position (rejection sampling)
+        r = torch.rand(corrected_gamma, device=target.device)
+        fractions = p / q
+        n = corrected_gamma
+        for i in range(corrected_gamma):
+            if r[i] > fractions[0, i, input_ids[0, current_position + i]]:
+                n = i
+                break
+
+        drafts_accepted += n
+
+        # check if the end token is in the drafts
+        stop_locations = torch.nonzero(torch.eq(input_ids[..., current_position:current_position + n], stop_tokens))
+        if stop_locations.shape[0] > 0:
+            stop_location = stop_locations[0, 1].item()
+            return input_ids[0, prompt_len:current_position + stop_location + 1].tolist(), drafts_accepted / drafts_speculated, target_calls
+
+        # adjust the distribution from Mp
+        if n == corrected_gamma:
+            p_p = Mp.logits[..., current_position + corrected_gamma - 1, :]
+            p_p = logits_processor(p_p)
+        else:
+            if not skip_sample_adjustment:
+                p_p = max_fn(p[..., n, :] - q[0, n, :])
+            else:
+                p_p = p[..., n, :]
+        x = logits_processor.sample(p_p)
+
+
+        input_ids[0, current_position + n:current_position + corrected_gamma] = pad_token_id
+        input_ids[0, current_position + n] = x
+
+        current_position += n + 1
+
+        if torch.isin(x, stop_tokens):
+            return input_ids[0, prompt_len:current_position].tolist(), drafts_accepted / drafts_speculated, target_calls
+
+    return input_ids[0, prompt_len:].tolist(), drafts_accepted / drafts_speculated, target_calls
+
+
+''' Inference '''
+
+import argparse
+import random
+import numpy as np
+import torch
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    QuantoConfig,
+)
+import time
+import os
+import matplotlib.pyplot as plt
+from typing import List, Optional
+from rich import print
+
+
+
+
+class InferenceCLI:
+
+    def __init__(self, device: str = "cuda", target_model: Optional[str] = None, drafter_model: Optional[str] = None):    
+        print("[red]SPADE: Speculative Decoding[/red] [white on red]CLI[/white on red]\n")
+        self.device = device
+        self.target_model = target_model
+        self.drafter_model = drafter_model
+        self.gamma = 6
+        self.gen_len = 128
+        self.spec = True
+        self.dr = False
+        self.target_gen = True
+        self.chat = True 
+        self.processor = GreedyProcessor()
+
+        self._load_models()
+        self._chat_running = False   # whether _run loop is active
+        self._running = True
+
+
+    def start_chat(self):
+      # Start the interactive chat loop. Safe to call multiple times.
+      if self._chat_running:
+        print("[yellow]Chat already running.[/yellow]")
+        return
+      self._chat_running = True
+      print("[green]Starting chat — type /quit to stop chat but keep models loaded.[/green]")
+      try:
+          self._run()
+      finally:
+          self._chat_running = False
+          print("[green]Chat stopped. Models still loaded. Call cli.start_chat() to restart.[/green]")
+
+
+    def stop_chat(self):
+      """Stop the interactive chat loop (does not unload models)."""
+      if not self._chat_running:
+        print("[yellow]Chat is not running.[/yellow]")
+        return
+        # this will cause _run loop to exit at next iteration
+      self._chat_running = False
+
+    def run_gamma_sweep(self, prompt: str, gamma_list: List[int], plot: bool = True):
+      """
+        For each gamma in gamma_list: run speculative_generate once (deterministic seed),
+        collect the returned number of target model calls, and (optionally) plot gamma vs target_calls.
+        NOTE: this runs generation with current other flags (gen_len, processor, ...).
+      """
+      results = {}
+      # tokenize once outside loop
+      if self.chat:
+        prompt_wrap = self.tokenizer.apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True, tokenize=False)
+      else:
+        prompt_wrap = prompt
+      tokenized = self.tokenizer(prompt_wrap, return_tensors="pt").input_ids[0].tolist()
+
+      for g in gamma_list:
+        self._set_seed(42)
+        # call speculative_generate directly so we capture target_calls
+        _, accept_rate, target_calls = speculative_generate(
+            tokenized,
+            self.drafter,
+            self.target,
+            tokenizer=self.tokenizer,
+            logits_processor=self.processor,
+            gamma=g,
+            max_gen_len=self.gen_len,
+            eos_tokens_id=self.end_tokens,
+        )
+        results[g] = {"target_calls": target_calls, "accept_rate": accept_rate}
+        print(f"[cyan]Gamma={g} -> target model calls: {target_calls}, acceptance rate: {accept_rate:.4f}[/cyan]")
+
+        
+      # plot
+      if plot:
+        xs = sorted(results.keys())
+        ys_calls = [results[x]["target_calls"] for x in xs]
+        ys_accept = [results[x]["accept_rate"] for x in xs]
+
+        plt.figure(figsize=(7,4))
+        ax1 = plt.gca()
+        ax1.plot(xs, ys_calls, marker='o', label="Target Calls")
+        ax1.set_xlabel("gamma")
+        ax1.set_ylabel("target model calls")
+        ax1.grid(True)
+
+        ax2 = ax1.twinx()
+        ax2.plot(xs, ys_accept, marker='x', color='orange', label="Acceptance Rate")
+        ax2.set_ylabel("acceptance rate")
+
+        plt.title("Gamma sweep: target calls (left) and acceptance rate (right)")
+        plt.tight_layout()
+        plt.show()
+
+      return results
+
+
+
+
+    def _load_models(self):
+        # Target model
+        default_target = "meta-llama/Llama-3.1-8B-Instruct"
+        target_quantize = QuantoConfig(weights="int8")  # QuantoConfig(weights="int8")  None
+
+        # Drafter model
+        default_drafter = "meta-llama/Llama-3.2-1B-Instruct"
+        # drafter_quantize = QuantoConfig(weights="int8")  # QuantoConfig(weights="int8") None
+
+        target_model = self.target_model or default_target
+        drafter_model = self.drafter_model or default_drafter
+        print(f"[on yellow]Target model:[/] {target_model}")
+        print(f"[on yellow]Drafter model:[/] {drafter_model}")
+        print("[grey50]Loading models...[/grey50]")
+
+        self.target = AutoModelForCausalLM.from_pretrained(
+            target_model,
+            quantization_config=target_quantize,
+            device_map= self.device,
+            trust_remote_code=True,
+        )
+        self.target.eval()
+
+        tokenizer_name = target_model
+        if tokenizer_name != target_model:
+            print("[on red]Warning: Tokenizer is different from target model. Use with caution.[/on red]")
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
+
+        self.drafter = AutoModelForCausalLM.from_pretrained(
+            drafter_model,  
+            # quantization_config=drafter_quantize,
+            device_map= self.device,
+            trust_remote_code=True,
+        )
+        self.drafter.eval()
+
+        self.end_tokens = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")] # "<|eot_id|>" is the end of turn token for Llama model.
+
+
+
+    def _perform_command(self, command: str):
+        args = command.split(" ")
+        if args[0] == "/quit":
+            print("[on red]Stopping chat — models still loaded. You can restart with cli.start_chat()[/on red]")
+            self._chat_running = False
+            return
+        if args[0] == "/speculative":
+            self.spec = not self.spec
+            print(f"[on cyan]Speculative Decoding generation: {self.spec}[/on cyan]")
+            return
+        if args[0] == "/drafter":
+            self.dr = not self.dr
+            print(f"[on cyan]Drafter generation: {self.dr}[/on cyan]")
+            return
+        if args[0] == "/target":
+            self.target_gen = not self.target_gen
+            print(f"[on cyan]Target generation: {self.target_gen}[/on cyan]")
+            return
+        if args[0] == "/chat":
+            self.chat = not self.chat
+            print(f"[on cyan]Chat mode: {self.chat}[/on cyan]")
+            return
+        if args[0] == "/length":
+            if len(args) < 2:
+                print("[red]Usage: /length <value>[/red]")
+                return
+            self.gen_len = int(args[1])
+            print(f"[on cyan]Generation length: {int(args[1])}[/on cyan]")
+            return
+        if args[0] == "/gamma":
+            if len(args) < 2:
+                print("[red]Usage: /gamma <value>[/red]")
+                return
+            self.gamma = int(args[1])
+            print(f"[on cyan]Gamma: {int(args[1])}[/on cyan]")
+            return
+        if args[0] == "/clear":
+            os.system("cls" if os.name == "nt" else "clear")
+            return
+        
+        print("[red]Unknown command[/red]")
+        self._help()
+
+
+
+    def _help(self):
+        print("[on cyan]Commands:[/on cyan]")
+        print("/quit: quit the program")
+        print("/clear: clear the screen")
+        print("/speculative: toggle speculative decoding")
+        print(f"\t[{'green' if self.spec else 'red'}]{self.spec}[/]")
+        print("/target: toggle target generation")
+        print(f"\t[{'green' if self.target_gen else 'red'}]{self.target_gen}[/]")
+        print("/drafter: toggle drafter generation")
+        print(f"\t[{'green' if self.dr else 'red'}]{self.dr}[/]")
+        print("/chat: toggle chat mode")
+        print(f"\t[{'green' if self.chat else 'red'}]{self.chat}[/]")
+        print("/length <value>: set generation length")
+        print(f"\t[cyan]{self.gen_len}[/cyan]")
+        print("/gamma <value>: set gamma")
+        print(f"\t[cyan]{self.gamma}[/cyan]")
+
+
+
+
+    def _infer(self, prefix: str):
+        if self.chat:
+            prefix = self.tokenizer.apply_chat_template([{"role": "user", "content": prefix}], add_generation_prompt=True, tokenize=False)
+
+        tokenized = self.tokenizer(prefix, return_tensors="pt").input_ids[0].tolist()
+        spec_throughput = 0.0
+        base_throughput = 0.0
+        drafter_throughput = 0.0
+
+        if self.spec:
+            self._set_seed(42)
+            spec_start_time = time.time()
+            output_ids, accept_rate, target_calls = speculative_generate(
+                tokenized,
+                self.drafter,
+                self.target,
+                tokenizer=self.tokenizer,
+                logits_processor=self.processor,
+                gamma=self.gamma,
+                max_gen_len=self.gen_len,
+                eos_tokens_id=self.end_tokens,
+            )
+            spec_end_time = time.time()
+            spec_output = self.tokenizer.decode(output_ids, skip_special_tokens=True)
+            print("[green]========== Speculative ==========[/green]")
+            print(f"[yellow]Out: {spec_output}[/yellow]")
+            print(f"[yellow]Acceptance rate: {accept_rate:.3f}[/yellow]")
+            spec_throughput = len(spec_output) / (spec_end_time - spec_start_time)
+            print(f"[yellow]Throughput: {spec_throughput:.1f} tokens/s[/yellow]")
+            print("[green]========== Speculative ==========[/green]")
+
+        if self.target_gen:
+            self._set_seed(42)
+            start_time = time.time()
+            output_ids = autoregressive_generate(
+                tokenized,
+                self.target,
+                max_gen_len=self.gen_len,
+                eos_tokens_id=self.end_tokens,
+                logits_processor=self.processor,
+            )
+            end_time = time.time()
+            output = self.tokenizer.decode(output_ids, skip_special_tokens=True)
+            print("[cyan]=========== Target AR ===========[/cyan]")
+            print(f"[cyan]Out: {output}[/cyan]")
+            base_throughput = len(output) / (end_time - start_time)
+            print(f"[cyan]Throughput: {base_throughput:.1f} tokens/s[/cyan]")
+            print("[cyan]=========== Target AR ===========[/cyan]")
+            if self.spec and base_throughput > 0.0:
+                print(f"[magenta]Throughput increase: {(spec_throughput / base_throughput) * 100:.1f}%[/magenta]")
+
+        if self.dr:
+            self._set_seed(42)
+            output_ids = autoregressive_generate(
+                tokenized,
+                self.drafter,
+                # use_cache=self.cache,
+                max_gen_len=self.gen_len,
+                eos_tokens_id=self.end_tokens,
+                logits_processor=self.processor,
+                # debug=self.debug,
+            )
+            output = self.tokenizer.decode(output_ids, skip_special_tokens=True)
+
+            print("[cyan]========== Drafter AR ==========[/cyan]")
+            drafter_throughput = len(output) / (end_time - start_time)
+            print(f"[magenta]Out:[/magenta] {output}")
+            print(f"[magenta]Throughput: {drafter_throughput:.1f} tokens/s[/magenta]")
+            print("[cyan]========== Drafter AR ==========[/cyan]")
+
+    def _run(self):
+        while self._chat_running:
+            command = input("> ").replace('\\n', '\n').replace('\\t', '\t')
+            if command.startswith("/"):
+                self._perform_command(command)
+                continue
+
+            self._infer(command)
+
+
+    def _set_seed(self, seed: int):
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Running SPADE CLI")
+    parser.add_argument("--device", type=str, default="cuda", help="Device to use for inference")
+    args, unknown = parser.parse_known_args()
+
+    cli = InferenceCLI(device=args.device)
+
+    print("Models loaded. Commands at manager prompt:")
+    print("  start   -> start interactive chat (type /quit inside chat to stop chat but keep models loaded)")
+    print("  sweep   -> run gamma sweep (usage: sweep 1 2 4 6) ; will then ask for prompt")
+    print("  exit    -> exit process and unload models")
+
+    while True:
+        try:
+            cmd = input("manager> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("exiting manager.")
+            break
+
+        if not cmd:
+            continue
+
+        parts = cmd.split()
+        if parts[0] == "start":
+            cli.start_chat()
+        elif parts[0] == "sweep":
+            # parse gammas from manager command or use defaults
+            if len(parts) > 1:
+                try:
+                    gammas = [int(x) for x in parts[1:]]
+                except ValueError:
+                    print("Invalid gamma list. Use integers, e.g.: sweep 1 2 4 6")
+                    continue
+            else:
+                gammas = [2, 4, 6, 8, 10]
+            prompt = input("Enter prompt for sweep> ")
+            cli.run_gamma_sweep(prompt, gammas, plot=True)
+        elif parts[0] == "exit":
+            print("Exiting process and unloading models.")
+            break
+        else:
+            print("Unknown manager command. Use start | sweep | exit")
