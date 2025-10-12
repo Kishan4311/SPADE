@@ -1,6 +1,6 @@
 # Usable
 '''
-    python inference2.py \
+    python inference.py \
         --device "cuda:0"
 
 '''
@@ -16,6 +16,7 @@ warnings.filterwarnings('ignore')
 
 # huggingface-cli login
 
+'''logits processor'''
 import abc
 import torch
 from torch import Tensor
@@ -118,8 +119,6 @@ def autoregressive_generate(
     logits_processor: LogitsProcessor = GreedyProcessor(),
     eos_tokens_id: int | List[int] = 1,
     pad_token_id: int = 0,
-    # use_cache: bool = False,
-    # debug: bool = False,
 ) -> List[int]:
     """
     Generate text sequence autoregressively based on the input sequence.
@@ -131,8 +130,7 @@ def autoregressive_generate(
         logits_processor (LogitsProcessor): logits processor for sampling.
         eos_token_id (int): end token id.
         pad_token_id (int): pad token id.
-        use_cache (bool): whether to use cache.
-
+        
     Returns:
         List[int]: generated sequence.
 
@@ -159,7 +157,6 @@ def autoregressive_generate(
         x = logits_processor.sample(probs)  # [1, 1]
         input_ids[0, curr] = x
         
-
         # check for end token
         if torch.isin(x, stop_tokens):
             break
@@ -169,7 +166,7 @@ def autoregressive_generate(
 
 
 
-# Speculative_Decoding
+# SPADE: Speculative_Decoding
 
 import torch
 from torch.nn import Module
@@ -199,10 +196,8 @@ def speculative_generate(
     max_gen_len: int = 40,
     eos_tokens_id: int | List[int] = 1,
     pad_token_id: int = 0,
-    # use_cache: bool = False,
     skip_sample_adjustment: bool = False,
     first_target: bool = True,
-    # debug: bool = False,
 ) -> Tuple[List[int], float, float]:
     """
     Generate text sequence using the speculative decoding algorithm.
@@ -218,10 +213,8 @@ def speculative_generate(
         max_gen_len (int): maximum length of the generated sequence.
         eos_tokens_id (int or List[int]): end token id (could be multiple).
         pad_token_id (int): pad token id.
-        use_cache (bool): whether to use cache.
         skip_sample_adjustment (bool): whether to skip the sample adjustment step when some drafts are discarded.
         first_target (bool): whether to run the target model before the speculative algorithm.
-        debug (bool): debug mode.
 
     Returns:
         List[int]: generated sequence.
@@ -350,8 +343,6 @@ from typing import List, Optional
 from rich import print
 
 
-
-
 class InferenceCLI:
 
     def __init__(self, device: str = "cuda", target_model: Optional[str] = None, drafter_model: Optional[str] = None):    
@@ -366,7 +357,6 @@ class InferenceCLI:
         self.target_gen = True
         self.chat = True 
         self.processor = GreedyProcessor()
-
         self._load_models()
         self._chat_running = False   # whether _run loop is active
         self._running = True
@@ -535,7 +525,6 @@ class InferenceCLI:
         self._help()
 
 
-
     def _help(self):
         print("[on cyan]Commands:[/on cyan]")
         print("/quit: quit the program")
@@ -553,9 +542,7 @@ class InferenceCLI:
         print("/gamma <value>: set gamma")
         print(f"\t[cyan]{self.gamma}[/cyan]")
 
-
-
-
+    
     def _infer(self, prefix: str):
         if self.chat:
             prefix = self.tokenizer.apply_chat_template([{"role": "user", "content": prefix}], add_generation_prompt=True, tokenize=False)
