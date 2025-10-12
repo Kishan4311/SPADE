@@ -55,54 +55,6 @@ class GreedyProcessor(LogitsProcessor):
         return torch.argmax(probs, dim=-1).unsqueeze(-1)
 
 
-
-''' Printing '''
-
-from typing import List, Tuple
-from rich import print
-from torch import Tensor
-
-
-def token_ids_to_string(token_ids, tokenizer):
-    """Convert token ids to string.
-
-    Args:
-        token_ids (List[int]): List of token ids.
-        tokenizer (Tokenizer): Tokenizer.
-
-    Returns:
-        str: String representation of token ids.
-    """
-    strings = tokenizer.convert_ids_to_tokens(token_ids)
-    return " ".join(strings)
-
-
-def end_token_found(location: int):
-    print(f"[red]End token found at position {location}[/red]")
-
-
-def initial_step(token: Tensor, tokenizer):
-    print(f"[white on grey]Initial Step[/white on grey] 1 token:")
-    print(f"[cyan]{token_ids_to_string(token, tokenizer)}[/cyan]")
-
-
-def speculative_step(
-    tokenizer,
-    current_inputs: Tensor,
-    inputs: Tensor,
-    n: int,
-    prompt_end: int,
-    current_position: int,
-    corrected_gamma: int,
-):
-    print(f"[white on grey]Speculative Step[/white on grey] {n} draft{'s' if n > 1 else ''} + 1 token:")
-    base_text = token_ids_to_string(inputs[0, prompt_end:current_position], tokenizer)
-    green_text = f"[green]{token_ids_to_string(inputs[0, current_position : current_position + n], tokenizer)}[/green]" if n > 0 else ""
-    red_text = f"[red]{token_ids_to_string(current_inputs[0, current_position + n : current_position + corrected_gamma], tokenizer)}[/red]" if n < corrected_gamma else ""
-    cyan_text = f"[cyan]{token_ids_to_string(inputs[..., current_position + n], tokenizer)}[/cyan]"
-    print(f"{base_text} {green_text} {red_text} {cyan_text}")
-
-
 ''' Autoregressive_Method : Benchmark '''
 
 from math import inf
@@ -244,7 +196,6 @@ def speculative_generate(
 
     target_calls = 0
     if first_target:
-        # run the target model before the speculative algorithm. Allows to prefill the kvcache and get a first token.
         Mp = target(
             input_ids=input_ids[..., :current_position],
         )
@@ -268,7 +219,6 @@ def speculative_generate(
         for k in range(corrected_gamma):
             Mq = drafter(input_ids=input_ids[..., :current_position + k],)
             
-
             draft_logits = Mq.logits[..., -1, :]
             draft_probs = logits_processor(draft_logits)
             q[0, k] = draft_probs.to(target.device)
@@ -599,11 +549,9 @@ class InferenceCLI:
             output_ids = autoregressive_generate(
                 tokenized,
                 self.drafter,
-                # use_cache=self.cache,
                 max_gen_len=self.gen_len,
                 eos_tokens_id=self.end_tokens,
                 logits_processor=self.processor,
-                # debug=self.debug,
             )
             output = self.tokenizer.decode(output_ids, skip_special_tokens=True)
 
