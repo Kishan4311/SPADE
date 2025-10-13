@@ -43,9 +43,9 @@ login("<YOUR_HF_TOKEN>")
 
 ---
 
-## Run interactive chat (edge-side drafter)
+## Run Interactive Chat 
 
-Run the interactive inference UI (uses the drafter on the specified device):
+Run the interactive inference UI :
 
 ```bash
 python inference.py --device "cuda:0"
