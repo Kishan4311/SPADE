@@ -6,13 +6,13 @@ Usage example:
 python evaluation/evaluate_specbench.py \
   --code-path "inference.py" \
   --specbench "data/SpecBench_question.jsonl" \
-  --out "/home/iitb/Kishan_SpecDec/results/specbench_results_gm8_tgt8B_genLen256.jsonl" \
+  --out "/home/iitb/Kishan_SpecDec/results/specbench_results_gm6_tgt8B_genLen256.jsonl" \
   --summary "/home/iitb/Kishan_SpecDec/specbench_summary.json" \
   --device "cuda:0" \
   --gamma 6 \
   --max-gen-len 256 \
   --max-examples 480 \
-  --target-model "meta-llama/Llama-3.2-3B-Instruct" \
+  --target-model "meta-llama/Llama-3.1-8B-Instruct" \
   --drafter-model "meta-llama/Llama-3.2-1B-Instruct"
 
 """
@@ -41,30 +41,7 @@ def load_user_module(module_path: str, mod_name: str = "user_specdec"):
     spec.loader.exec_module(module)
     return module
 
-
-# Wrapper that measures time and call count of model forward
-class ModelWithTimer:
-    def __init__(self, model):
-        self._model = model
-        self.time_sec = 0.0
-        self.calls = 0
-
-    # forward the call and measure the wall-clock time
-    def __call__(self, *args, **kwargs):
-        t0 = time.time()
-        out = self._model(*args, **kwargs)
-        t1 = time.time()
-        self.time_sec += (t1 - t0)
-        self.calls += 1
-        return out
-
-    # forward attribute access to the underlying model (device, config, etc.)
-    def __getattr__(self, name):
-        return getattr(self._model, name)
-
-
 # Prompt preparation (use tokenizer.apply_chat_template )
-
 def prepare_prompt_from_turns(turns: List[str], tokenizer, chat=True):
     # turns is a list of strings; joining  them for SpecBench dataset.
     try:
@@ -137,14 +114,15 @@ def evaluate(
     os.makedirs(out_dir, exist_ok=True)
     fout = open(out_jsonl, "w", encoding="utf-8")
 
-    # stats accumulators (kept for summary; per-category aggregation will be done later)
+    # stats accumulators (kept for summary)
     baseline_target_throughputs = []
+    baseline_target_num_tokens = []
     baseline_draft_throughputs = []
+    baseline_draft_num_tokens = []
     spec_throughputs = []
-    acceptance_rates = []
+    spec_num_tokens_list = []
     target_calls_list = []
-    target_time_list = []
-    draft_time_list = []
+    acceptance_rates = []
 
     successes = 0
     failures = 0
@@ -183,8 +161,6 @@ def evaluate(
                 logits_processor=processor,
                 eos_tokens_id=cli.end_tokens,
                 pad_token_id=pad_id,
-                # use_cache=cli.cache,
-                # debug=False,
             )
             t1 = time.time()
             ar_target_time = t1 - t0
@@ -204,8 +180,6 @@ def evaluate(
                 logits_processor=processor,
                 eos_tokens_id=cli.end_tokens,
                 pad_token_id=pad_id,
-                # use_cache=cli.cache,
-                # debug=False,
             )
             t1 = time.time()
             ar_draft_time = t1 - t0
@@ -215,24 +189,20 @@ def evaluate(
             ar_draft_num_tokens = len(ar_draft_ids)
             ar_draft_throughput = ar_draft_num_tokens / max(ar_draft_time, 1e-9)
 
-            # ---------- Speculative (wrap both drafter and target to measure times separately) ----------
-            wrapped_target = ModelWithTimer(target)
-            wrapped_drafter = ModelWithTimer(drafter)
+            # ---------- Speculative ----------
 
             set_seed_local(seed)
             t0 = time.time()
             spec_output_ids, accept_rate, target_calls_reported = mod.speculative_generate(
                 tokenized,
-                wrapped_drafter,
-                wrapped_target,
+                drafter,
+                target,
                 tokenizer=tokenizer,
                 gamma=gamma,
                 logits_processor=processor,
                 max_gen_len=max_gen_len,
                 eos_tokens_id=cli.end_tokens,
                 pad_token_id=pad_id,
-                # use_cache=cli.cache,
-                # debug=False,
             )
             t1 = time.time()
             spec_total_time = t1 - t0
@@ -242,21 +212,19 @@ def evaluate(
             spec_text = tokenizer.decode(spec_output_ids, skip_special_tokens=True)
             spec_num_tokens = len(spec_output_ids)
             spec_throughput = spec_num_tokens / max(spec_total_time, 1e-9)
+            measured_target_calls = target_calls_reported
 
-            # measured per-model times & calls during spec
-            measured_target_calls = wrapped_target.calls
-            measured_target_time = wrapped_target.time_sec
-            measured_draft_calls = wrapped_drafter.calls
-            measured_draft_time = wrapped_drafter.time_sec
 
             # accumulate stats
             baseline_target_throughputs.append(ar_target_throughput)
+            baseline_target_num_tokens.append(ar_target_num_tokens)
             baseline_draft_throughputs.append(ar_draft_throughput)
+            baseline_draft_num_tokens.append(ar_draft_num_tokens)
             spec_throughputs.append(spec_throughput)
-            acceptance_rates.append(float(accept_rate) if accept_rate is not None else None)
+            spec_num_tokens_list.append(spec_num_tokens)
             target_calls_list.append(int(measured_target_calls))
-            target_time_list.append(float(measured_target_time))
-            draft_time_list.append(float(measured_draft_time))
+            acceptance_rates.append(float(accept_rate) if accept_rate is not None else None)
+            
 
             # write per-prompt result
             item = {
@@ -281,11 +249,7 @@ def evaluate(
                     "time_sec_total": spec_total_time,
                     "throughput_toks_per_sec": spec_throughput,
                     "acceptance_rate": float(accept_rate) if accept_rate is not None else None,
-                    "target_calls_reported_by_algo": int(target_calls_reported) if target_calls_reported is not None else None,
                     "target_calls_measured_wrapper": measured_target_calls,
-                    "target_time_sec": measured_target_time,
-                    "draft_calls_measured_wrapper": measured_draft_calls,
-                    "draft_time_sec": measured_draft_time,
                     "gamma": gamma,
                 },
             }
@@ -304,6 +268,51 @@ def evaluate(
     fout.close()
 
 
+    # After processing all examples: compute summary means and write summary_json
+    def safe_mean(lst):
+        if not lst:
+            return None
+        try:
+            return float(np.mean(lst))
+        except Exception:
+            # fallback: convert to list of floats ignoring None
+            filtered = [float(x) for x in lst if x is not None]
+            if not filtered:
+                return None
+            return float(np.mean(filtered))
+
+    # filter acceptance_rates None values
+    acceptance_filtered = [x for x in acceptance_rates if x is not None]
+
+    summary = {
+        "n_total": n_total,
+        "n_processed": successes + failures,
+        "successes": successes,
+        "failures": failures,
+        "mean_baseline_target_throughput": safe_mean(baseline_target_throughputs),
+        "mean_baseline_target_num_tokens": safe_mean(baseline_target_num_tokens),
+        "mean_baseline_draft_throughput": safe_mean(baseline_draft_throughputs),
+        "mean_baseline_draft_num_tokens": safe_mean(baseline_draft_num_tokens),
+        "mean_spec_throughput": safe_mean(spec_throughputs),
+        "mean_spec_num_tokens": safe_mean(spec_num_tokens_list),
+        "mean_target_calls": safe_mean(target_calls_list),
+        "mean_acceptance_rate": safe_mean(acceptance_filtered),
+    }
+
+    # Ensure summary directory exists
+    summary_dir = os.path.dirname(summary_json) or "."
+    os.makedirs(summary_dir, exist_ok=True)
+    with open(summary_json, "w", encoding="utf-8") as sf:
+        json.dump(summary, sf, ensure_ascii=False, indent=2)
+
+    # Print the summary to the terminal
+    print("\n=== Run summary (means) ===")
+    print(json.dumps(summary, indent=2))
+    print("===========================\n")
+
+
+
+
 # CLI
 
 if __name__ == "__main__":
@@ -315,7 +324,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", default="cuda", help="Device to pass to InferenceCLI (cuda/cpu)")
     parser.add_argument("--gamma", type=int, default=4, help="Gamma (drafts) for speculative decoding")
     parser.add_argument("--max-gen-len", type=int, default=64, help="Max generation length")
-    parser.add_argument("--processor", default="greedy", choices=["greedy","multinomial","topk","nucleus","topknucleus"])
+    parser.add_argument("--processor", default="greedy", choices=["greedy"])
     parser.add_argument("--max-examples", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--target-model", type=str, default=None, help="HuggingFace repo id or local path to use as TARGET model (overrides specdec defaults)")
