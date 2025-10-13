@@ -4,15 +4,15 @@ evaluate_specbench.py
 
 Usage example:
 python evaluate_specbench.py \
-  --code-path "/home/iitb/Kishan_SpecDec/llama_3_2_1b_specdec_v2 (1).py" \
-  --specbench "/home/iitb/Kishan_SpecDec/Data/SpecBench_question.jsonl" \
+  --code-path "inference.py" \
+  --specbench "data/SpecBench_question.jsonl" \
   --out "/home/iitb/Kishan_SpecDec/results/specbench_results_gm8_tgt8B_genLen256.jsonl" \
   --summary "/home/iitb/Kishan_SpecDec/specbench_summary.json" \
-  --device "cuda:3" \
-  --gamma 8 \
+  --device "cuda:0" \
+  --gamma 6 \
   --max-gen-len 256 \
   --max-examples 480 \
-  --target-model "meta-llama/Llama-3.1-8B-Instruct" \
+  --target-model "meta-llama/Llama-3.2-3B-Instruct" \
   --drafter-model "meta-llama/Llama-3.2-1B-Instruct"
 
 """
