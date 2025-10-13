@@ -184,7 +184,7 @@ def evaluate(
                 eos_tokens_id=cli.end_tokens,
                 pad_token_id=pad_id,
                 # use_cache=cli.cache,
-                debug=False,
+                # debug=False,
             )
             t1 = time.time()
             ar_target_time = t1 - t0
@@ -205,7 +205,7 @@ def evaluate(
                 eos_tokens_id=cli.end_tokens,
                 pad_token_id=pad_id,
                 # use_cache=cli.cache,
-                debug=False,
+                # debug=False,
             )
             t1 = time.time()
             ar_draft_time = t1 - t0
@@ -232,7 +232,7 @@ def evaluate(
                 eos_tokens_id=cli.end_tokens,
                 pad_token_id=pad_id,
                 # use_cache=cli.cache,
-                debug=False,
+                # debug=False,
             )
             t1 = time.time()
             spec_total_time = t1 - t0
