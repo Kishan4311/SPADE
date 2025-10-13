@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 
 # Paths (adjust if needed)
-QUESTION_FILE = Path("/home/iitb/Kishan_SpecDec/Data/SpecBench_question.jsonl")
+QUESTION_FILE = Path("data/SpecBench_question.jsonl")
 RESULTS_FILE = Path("/home/iitb/Kishan_SpecDec/results_specbench/specbench_results_gm8_tgt8B_genLen256.jsonl")
 OUTPUT_FILE = Path("/home/iitb/Kishan_SpecDec/results_specbench/specbench_results_gm8_tgt8B_genLen256_cleaned.jsonl")
 
