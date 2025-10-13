@@ -183,7 +183,7 @@ def evaluate(
                 logits_processor=processor,
                 eos_tokens_id=cli.end_tokens,
                 pad_token_id=pad_id,
-                use_cache=cli.cache,
+                # use_cache=cli.cache,
                 debug=False,
             )
             t1 = time.time()
@@ -204,7 +204,7 @@ def evaluate(
                 logits_processor=processor,
                 eos_tokens_id=cli.end_tokens,
                 pad_token_id=pad_id,
-                use_cache=cli.cache,
+                # use_cache=cli.cache,
                 debug=False,
             )
             t1 = time.time()
@@ -231,7 +231,7 @@ def evaluate(
                 max_gen_len=max_gen_len,
                 eos_tokens_id=cli.end_tokens,
                 pad_token_id=pad_id,
-                use_cache=cli.cache,
+                # use_cache=cli.cache,
                 debug=False,
             )
             t1 = time.time()
