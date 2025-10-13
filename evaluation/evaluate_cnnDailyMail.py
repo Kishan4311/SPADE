@@ -184,11 +184,10 @@ def evaluate(dataset_path: str,
             target_out_ids = autoregressive_generate(
                 tokenized,
                 cli.target,
-                use_cache=cli.cache,
                 max_gen_len=cli.gen_len,
                 eos_tokens_id=cli.end_tokens,
                 logits_processor=cli.processor,
-                debug=False,
+                # debug=False,
             )
         except Exception as e:
             print("Error during target-only generation:", e)
@@ -214,11 +213,10 @@ def evaluate(dataset_path: str,
             drafter_out_ids = autoregressive_generate(
                 tokenized,
                 cli.drafter,
-                use_cache=cli.cache,
                 max_gen_len=cli.gen_len,
                 eos_tokens_id=cli.end_tokens,
                 logits_processor=cli.processor,
-                debug=False,
+                # debug=False,
             )
         except Exception as e:
             print("Error during drafter-only generation:", e)
@@ -253,8 +251,6 @@ def evaluate(dataset_path: str,
                 gamma=cli.gamma,
                 max_gen_len=cli.gen_len,
                 eos_tokens_id=cli.end_tokens,
-                debug=False,
-                use_cache=cli.cache,
             )
         except Exception as e:
             print("Error during speculative_generate:", e)
@@ -283,11 +279,11 @@ def evaluate(dataset_path: str,
         with open(output_path, "w", encoding="utf-8") as wf:
             json.dump(results_all, wf, ensure_ascii=False, indent=2)
 
-        # try freeing GPU cache (optional)
-        try:
-            torch.cuda.empty_cache()
-        except Exception:
-            pass
+        # # try freeing GPU cache (optional)
+        # try:
+        #     torch.cuda.empty_cache()
+        # except Exception:
+        #     pass
 
     print(f"\nCompleted {k} samples. Results saved to: {output_path}")
 
