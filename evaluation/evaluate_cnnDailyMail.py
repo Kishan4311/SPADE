@@ -3,17 +3,16 @@
 evaluate_cnnDailyMail.py
 
 Usage example:
-python evaluate_cnnDailyMail.py \
---device "cuda:3" \
+python evaluation/evaluate_cnnDailyMail.py \
+--device "cuda:0" \
   --dataset "/home/iitb/Kishan_SpecDec/Data/cnnDailyMail .json" \
-  --specdec_path "/home/iitb/Kishan_SpecDec/llama_3_2_1b_specdec_v2 (1).py" \
+  --specdec_path "inference.py" \
   --k 200 \
   --gen_len 128 \
-  --gamma 12 \
-  --target_model "meta-llama/Llama-3.1-8B-Instruct" \
+  --gamma 6 \
+  --target_model "meta-llama/Llama-3.2-3B-Instruct" \
   --drafter_model "meta-llama/Llama-3.2-1B-Instruct" \
-  --output "/home/iitb/Kishan_SpecDec/results_cnnDailyMail/cnnDailyMail_result_gm12_tgt8B_genLen128.json"
-
+  --output "/home/iitb/Kishan_SpecDec/results_cnnDailyMail/cnnDailyMail_result_gm6_tgt3B_genLen128.json"
 
 """
 
