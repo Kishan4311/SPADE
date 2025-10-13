@@ -9,7 +9,7 @@ SPADE is a distributed inference framework that combines speculative decoding ac
 ## Key features
 
 * Implements Speculative Decoding adapted for distributed edge ↔ cloud inference.
-* Interactive UI to run prompts and debug (run `inference.py`).
+* Interactive UI to run prompts (run `inference.py`).
 * Supports LLaMA-family models (configurable target/drafter models).
 * Evaluation suites for **CNN / DailyMail** and **SPEC‑BENCH** datasets across multiple tasks.
 * Modular, easy-to-run scripts for reproducing experiments and extending SPADE.
@@ -22,8 +22,8 @@ SPADE is a distributed inference framework that combines speculative decoding ac
 ### Clone the repository
 
 ```bash
-git clone https://github.com/Kishan4311/SPADE-Speculative-Decoding-for-Precise-and-Low-Cost-Distributed-Edge-Cloud-Inference.git
-cd SPADE-Speculative-Decoding-for-Precise-and-Low-Cost-Distributed-Edge-Cloud-Inference
+git clone https://github.com/Kishan4311/SPADE.git
+cd SPADE
 ```
 
 ### Install requirements
@@ -65,7 +65,7 @@ You can swap `--device` to `cpu` or another CUDA device as needed.
 python evaluation/evaluate_specbench.py \
   --code-path "inference.py" \
   --specbench "data/SpecBench_question.jsonl" \
-  --out "OUTPUTPATH/specbench_results_gm8_tgt8B_genLen256.jsonl" \
+  --out "OUTPUTPATH/OUTPUT_FILENAME.json" \
   --summary "OUTPUTPATH/specbench_summary.json" \
   --device "cuda:0" \
   --gamma 6 \
@@ -82,7 +82,7 @@ python evaluation/evaluate_cnnDailyMail.py \
   --device "cuda:0" \
   --dataset "data/cnnDailyMail.json" \
   --specdec_path "inference.py" \
-  --output "OUTPUTPATH/cnnDailyMail_result_gm6_tgt3B_genLen128.json" \
+  --output "OUTPUTPATH/OUTPUT_FILENAME.json" \
   --k 200 \
   --gen_len 128 \
   --gamma 6 \
@@ -96,14 +96,13 @@ python evaluation/evaluate_cnnDailyMail.py \
 
 ## Configuration & models
 
-* Edit model names and device options directly in the script invocation or in the config file (if present).
+* Edit model names and device options directly in the script invocation.
 * Make sure the drafter is a smaller, fast model and the target/verifier is a larger high-quality model for best cost/accuracy tradeoffs.
 
 ---
 
 ## Reproducing experiments
 
-* All experiments are scripted under `evaluation/` — modify paths and flags to match your environment.
 * Keep consistent HF model identifiers and ensure you have permission/access to the models used.
 
 ---
@@ -124,8 +123,4 @@ This project is provided under the terms of the <>. See `LICENSE` for details.
 
 If you use SPADE in your research, please consider citing the repository and include a brief note in your methods describing the drafter/verifier split and the speculative decoding setup.
 
----
 
-## Contact
-
-For questions or collaboration: open an issue on GitHub or reach out to the repository owner.
