@@ -3,7 +3,7 @@
 evaluate_specbench.py
 
 Usage example:
-python evaluate_specbench.py \
+python evaluation\evaluate_specbench.py \
   --code-path "inference.py" \
   --specbench "data/SpecBench_question.jsonl" \
   --out "/home/iitb/Kishan_SpecDec/results/specbench_results_gm8_tgt8B_genLen256.jsonl" \
