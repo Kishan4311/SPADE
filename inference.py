@@ -1,6 +1,6 @@
 # Usable
 '''
-    python inference2.py \
+    python inference.py \
         --device "cuda:0"
 
 '''
@@ -16,6 +16,7 @@ warnings.filterwarnings('ignore')
 
 # huggingface-cli login
 
+'''logits processor'''
 import abc
 import torch
 from torch import Tensor
@@ -54,54 +55,6 @@ class GreedyProcessor(LogitsProcessor):
         return torch.argmax(probs, dim=-1).unsqueeze(-1)
 
 
-
-''' Printing '''
-
-from typing import List, Tuple
-from rich import print
-from torch import Tensor
-
-
-def token_ids_to_string(token_ids, tokenizer):
-    """Convert token ids to string.
-
-    Args:
-        token_ids (List[int]): List of token ids.
-        tokenizer (Tokenizer): Tokenizer.
-
-    Returns:
-        str: String representation of token ids.
-    """
-    strings = tokenizer.convert_ids_to_tokens(token_ids)
-    return " ".join(strings)
-
-
-def end_token_found(location: int):
-    print(f"[red]End token found at position {location}[/red]")
-
-
-def initial_step(token: Tensor, tokenizer):
-    print(f"[white on grey]Initial Step[/white on grey] 1 token:")
-    print(f"[cyan]{token_ids_to_string(token, tokenizer)}[/cyan]")
-
-
-def speculative_step(
-    tokenizer,
-    current_inputs: Tensor,
-    inputs: Tensor,
-    n: int,
-    prompt_end: int,
-    current_position: int,
-    corrected_gamma: int,
-):
-    print(f"[white on grey]Speculative Step[/white on grey] {n} draft{'s' if n > 1 else ''} + 1 token:")
-    base_text = token_ids_to_string(inputs[0, prompt_end:current_position], tokenizer)
-    green_text = f"[green]{token_ids_to_string(inputs[0, current_position : current_position + n], tokenizer)}[/green]" if n > 0 else ""
-    red_text = f"[red]{token_ids_to_string(current_inputs[0, current_position + n : current_position + corrected_gamma], tokenizer)}[/red]" if n < corrected_gamma else ""
-    cyan_text = f"[cyan]{token_ids_to_string(inputs[..., current_position + n], tokenizer)}[/cyan]"
-    print(f"{base_text} {green_text} {red_text} {cyan_text}")
-
-
 ''' Autoregressive_Method : Benchmark '''
 
 from math import inf
@@ -118,8 +71,6 @@ def autoregressive_generate(
     logits_processor: LogitsProcessor = GreedyProcessor(),
     eos_tokens_id: int | List[int] = 1,
     pad_token_id: int = 0,
-    # use_cache: bool = False,
-    # debug: bool = False,
 ) -> List[int]:
     """
     Generate text sequence autoregressively based on the input sequence.
@@ -131,8 +82,7 @@ def autoregressive_generate(
         logits_processor (LogitsProcessor): logits processor for sampling.
         eos_token_id (int): end token id.
         pad_token_id (int): pad token id.
-        use_cache (bool): whether to use cache.
-
+        
     Returns:
         List[int]: generated sequence.
 
@@ -159,7 +109,6 @@ def autoregressive_generate(
         x = logits_processor.sample(probs)  # [1, 1]
         input_ids[0, curr] = x
         
-
         # check for end token
         if torch.isin(x, stop_tokens):
             break
@@ -169,7 +118,7 @@ def autoregressive_generate(
 
 
 
-# Speculative_Decoding
+# SPADE: Speculative_Decoding
 
 import torch
 from torch.nn import Module
@@ -199,10 +148,8 @@ def speculative_generate(
     max_gen_len: int = 40,
     eos_tokens_id: int | List[int] = 1,
     pad_token_id: int = 0,
-    # use_cache: bool = False,
     skip_sample_adjustment: bool = False,
     first_target: bool = True,
-    # debug: bool = False,
 ) -> Tuple[List[int], float, float]:
     """
     Generate text sequence using the speculative decoding algorithm.
@@ -218,10 +165,8 @@ def speculative_generate(
         max_gen_len (int): maximum length of the generated sequence.
         eos_tokens_id (int or List[int]): end token id (could be multiple).
         pad_token_id (int): pad token id.
-        use_cache (bool): whether to use cache.
         skip_sample_adjustment (bool): whether to skip the sample adjustment step when some drafts are discarded.
         first_target (bool): whether to run the target model before the speculative algorithm.
-        debug (bool): debug mode.
 
     Returns:
         List[int]: generated sequence.
@@ -251,7 +196,6 @@ def speculative_generate(
 
     target_calls = 0
     if first_target:
-        # run the target model before the speculative algorithm. Allows to prefill the kvcache and get a first token.
         Mp = target(
             input_ids=input_ids[..., :current_position],
         )
@@ -275,7 +219,6 @@ def speculative_generate(
         for k in range(corrected_gamma):
             Mq = drafter(input_ids=input_ids[..., :current_position + k],)
             
-
             draft_logits = Mq.logits[..., -1, :]
             draft_probs = logits_processor(draft_logits)
             q[0, k] = draft_probs.to(target.device)
@@ -350,8 +293,6 @@ from typing import List, Optional
 from rich import print
 
 
-
-
 class InferenceCLI:
 
     def __init__(self, device: str = "cuda", target_model: Optional[str] = None, drafter_model: Optional[str] = None):    
@@ -366,7 +307,6 @@ class InferenceCLI:
         self.target_gen = True
         self.chat = True 
         self.processor = GreedyProcessor()
-
         self._load_models()
         self._chat_running = False   # whether _run loop is active
         self._running = True
@@ -535,7 +475,6 @@ class InferenceCLI:
         self._help()
 
 
-
     def _help(self):
         print("[on cyan]Commands:[/on cyan]")
         print("/quit: quit the program")
@@ -553,9 +492,7 @@ class InferenceCLI:
         print("/gamma <value>: set gamma")
         print(f"\t[cyan]{self.gamma}[/cyan]")
 
-
-
-
+    
     def _infer(self, prefix: str):
         if self.chat:
             prefix = self.tokenizer.apply_chat_template([{"role": "user", "content": prefix}], add_generation_prompt=True, tokenize=False)
@@ -612,11 +549,9 @@ class InferenceCLI:
             output_ids = autoregressive_generate(
                 tokenized,
                 self.drafter,
-                # use_cache=self.cache,
                 max_gen_len=self.gen_len,
                 eos_tokens_id=self.end_tokens,
                 logits_processor=self.processor,
-                # debug=self.debug,
             )
             output = self.tokenizer.decode(output_ids, skip_special_tokens=True)
 
