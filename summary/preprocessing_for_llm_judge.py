@@ -2,10 +2,16 @@
 """
 Usable:
 
-python /home/iitb/Kishan_SpecDec/Archived/preprocess_for_llm_judge.py \
-    --questions /home/iitb/Kishan_SpecDec/Data/SpecBench_question.jsonl \
+python /summary/preprocessing_for_llm_judge.py \
+    --questions data/SpecBench_question.jsonl \
     --results /home/iitb/Kishan_SpecDec/results_specbench/specbench_results_gm8_tgt8B_genLen256.jsonl \
     --out /home/iitb/Kishan_SpecDec/Archived/specbench_results_gm8_tgt8B_genLen256_preprocessed.jsonl
+
+"""
+This script preprocesses SpecBench results by merging question prompts and model outputs.  
+It reads question and result JSONL files, aligns them by question_id, cleans the data,  
+and writes a consolidated JSONL file ready for evaluation by Judge.
+"""
 
 """
 
