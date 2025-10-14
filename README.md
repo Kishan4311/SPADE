@@ -101,12 +101,6 @@ python evaluation/evaluate_cnnDailyMail.py \
 
 ---
 
-## Reproducing experiments
-
-* Keep consistent HF model identifiers and ensure you have permission/access to the models used.
-
----
-
 ## Contributing
 
 Contributions, issues and feature requests are welcome. Please open an issue or submit a pull request. For major changes, open an issue first to discuss the design.
