@@ -22,7 +22,7 @@ SPADE is a distributed inference framework that combines speculative decoding ac
 ### Clone the repository
 
 ```bash
-git clone https://github.com/repo_link
+git clone https://github.com/Kishan4311/SPADE.git
 cd SPADE
 ```
 
