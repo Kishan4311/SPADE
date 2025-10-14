@@ -22,7 +22,7 @@ SPADE is a distributed inference framework that combines speculative decoding ac
 ### Clone the repository
 
 ```bash
-git clone https://github.com/Kishan4311/SPADE.git
+git clone https://github.com/repo_link
 cd SPADE
 ```
 
@@ -112,15 +112,5 @@ python evaluation/evaluate_cnnDailyMail.py \
 Contributions, issues and feature requests are welcome. Please open an issue or submit a pull request. For major changes, open an issue first to discuss the design.
 
 ---
-
-## License
-
-This project is provided under the terms of the <>. See `LICENSE` for details.
-
----
-
-## Citation
-
-If you use SPADE in your research, please consider citing the repository and include a brief note in your methods describing the drafter/verifier split and the speculative decoding setup.
 
 
