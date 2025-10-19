@@ -3,16 +3,16 @@
 evaluate_cnnDailyMail.py
 
 Usage example:
-python evaluation/evaluate_cnnDailyMail.py \
+python /home/iitb/Kishan_SpecDec/Archived/evaluate_cnnDailyMail.py \
 --device "cuda:0" \
-  --dataset "/home/iitb/Kishan_SpecDec/Data/cnnDailyMail .json" \
-  --specdec_path "inference.py" \
+  --dataset "/home/iitb/Kishan_SpecDec/Data/cnnDailyMail.json" \
+  --specdec_path "/home/iitb/Kishan_SpecDec/Archived/inference.py" \
   --k 200 \
   --gen_len 128 \
   --gamma 6 \
-  --target_model "meta-llama/Llama-3.2-3B-Instruct" \
+  --target_model "meta-llama/Llama-3.1-8B-Instruct" \
   --drafter_model "meta-llama/Llama-3.2-1B-Instruct" \
-  --output "/home/iitb/Kishan_SpecDec/results_cnnDailyMail/cnnDailyMail_result_gm6_tgt3B_genLen128.json"
+  --output "/home/iitb/Kishan_SpecDec/results_cnnDailyMail/cnnDailyMail_result_gm6_tgt8B_genLen128.json"
 
 """
 
@@ -40,10 +40,6 @@ def import_module_from_path(path: str, module_name: str = "specdec_user_module")
 
 
 class TimedModelWrapper:
-    """
-    Wraps a HuggingFace model so each call is timed and counted.
-    Delegates attributes to underlying model.
-    """
     def __init__(self, model):
         self._model = model
         self.calls = 0
@@ -64,16 +60,16 @@ class TimedModelWrapper:
 def prepare_tokens_from_cli(cli, prompt_text: str) -> List[int]:
     """
     Mirror the CLI's approach for preparing tokens: use chat template if cli.chat True.
-    Fail gracefully if tokenizer.apply_chat_template is missing.
+
     """
     try:
         if getattr(cli, "chat", False):
-            # some tokenizers support apply_chat_template as in user's notebook
+            
             prompt_wrap = cli.tokenizer.apply_chat_template([{"role": "user", "content": prompt_text}], add_generation_prompt=True, tokenize=False)
         else:
             prompt_wrap = prompt_text
     except Exception:
-        # fallback
+        
         prompt_wrap = prompt_text
 
     tokenized = cli.tokenizer(prompt_wrap, return_tensors="pt").input_ids[0].tolist()
@@ -89,6 +85,7 @@ def evaluate(dataset_path: str,
              seed: int = 42,
              target_model: str | None = None,
              drafter_model: str | None = None):
+    
 
     print(f"Importing specdec module from: {specdec_path}")
     mod = import_module_from_path(specdec_path)
@@ -102,10 +99,9 @@ def evaluate(dataset_path: str,
     speculative_generate = getattr(mod, "speculative_generate")
     autoregressive_generate = getattr(mod, "autoregressive_generate")
 
-    # instantiate CLI (this will load models )
+    # instantiate CLI (this will load models)
     print(f"Instantiating InferenceCLI(device={device}, target_model={target_model}, drafter_model={drafter_model}) ... (this will load your models)")
     cli = InferenceCLI(device=device, target_model=target_model, drafter_model=drafter_model)
-    # cli = InferenceCLI(device=device)
     try:
         target_device = next(cli.target.parameters()).device
         drafter_device = next(cli.drafter.parameters()).device
@@ -146,7 +142,7 @@ def evaluate(dataset_path: str,
 
     print(f"Evaluating {k} samples, resuming from index {processed}. Results -> {output_path}")
 
-    # set seeds using CLI method (if available) else fallback
+    # helper: set seeds using CLI method (if available) else fallback
     def set_seed(s):
         if hasattr(cli, "_set_seed"):
             cli._set_seed(s)
@@ -187,7 +183,6 @@ def evaluate(dataset_path: str,
                 max_gen_len=cli.gen_len,
                 eos_tokens_id=cli.end_tokens,
                 logits_processor=cli.processor,
-                # debug=False,
             )
         except Exception as e:
             print("Error during target-only generation:", e)
@@ -216,7 +211,6 @@ def evaluate(dataset_path: str,
                 max_gen_len=cli.gen_len,
                 eos_tokens_id=cli.end_tokens,
                 logits_processor=cli.processor,
-                # debug=False,
             )
         except Exception as e:
             print("Error during drafter-only generation:", e)
@@ -275,15 +269,13 @@ def evaluate(dataset_path: str,
 
         
         results_all.append(entry)
-        # write incrementally
         with open(output_path, "w", encoding="utf-8") as wf:
             json.dump(results_all, wf, ensure_ascii=False, indent=2)
 
-        # # try freeing GPU cache (optional)
-        # try:
-        #     torch.cuda.empty_cache()
-        # except Exception:
-        #     pass
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
 
     print(f"\nCompleted {k} samples. Results saved to: {output_path}")
 
