@@ -1,20 +1,60 @@
 # Usable
 '''
-    python inference.py \
-        --device "cuda:0"
+    python /home/iitb/Kishan_SpecDec/Archived/inference2.py \
+        --device "cuda:1" \
+        --target_model llama-8b \
+        --drafter_model llama-1b
 
+    'plug and play with any of these models 
+    keeping drafter as smaller one and both model from same family'
+        ==== Llama family ====
+    "llama-1b": "meta-llama/Llama-3.2-1B-Instruct",
+    "llama-3b": "meta-llama/Llama-3.2-3B-Instruct",
+    "llama-8b": "meta-llama/Llama-3.1-8B-Instruct",
+        ==== Qwen family ====
+    "qwen-0.6b": "Qwen/Qwen3-0.6B",
+    "qwen-1.7b": "Qwen/Qwen3-1.7B",
+    "qwen-4b": "Qwen/Qwen3-4B",
+    "qwen-8b": "Qwen/Qwen3-8B", 
 '''
 
 # Installing dependencies
 
 # !pip install rich tqdm termcolor colorama "tokenizers>=0.19.1" "torch>=2.3.0" "transformers>=4.41.1" "accelerate>=0.30.1" "bitsandbytes>=0.43.1" optimum-quanto
 import random, time, math, os
+from typing import Dict, List, Optional
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 import warnings
 warnings.filterwarnings('ignore')
 
 # huggingface-cli login
+
+''' models catalog'''
+class ModelsCatalog:
+    _MAP: Dict[str,str] = {
+        # Llama family
+        "llama-1b": "meta-llama/Llama-3.2-1B-Instruct",
+        "llama-3b": "meta-llama/Llama-3.2-3B-Instruct",
+        "llama-8b": "meta-llama/Llama-3.1-8B-Instruct",
+        # Qwen family
+        "qwen-0.6b": "Qwen/Qwen3-0.6B",
+        "qwen-1.7b": "Qwen/Qwen3-1.7B",
+        "qwen-4b": "Qwen/Qwen3-4B",
+        "qwen-8b": "Qwen/Qwen3-8B",        
+    }
+
+    @classmethod
+    def list_models(cls) -> List[str]:
+        return list(cls._MAP.keys())
+    
+    @classmethod
+    def model_id(cls, key: str) -> str:
+        if key not in cls._MAP:
+            raise KeyError(f"Unknown model key '{key}'. Available: {', '.join(cls.list_models())}")
+        return cls._MAP[key]
+
+
 
 '''logits processor'''
 import abc
@@ -301,7 +341,7 @@ class InferenceCLI:
         self.target_model = target_model
         self.drafter_model = drafter_model
         self.gamma = 6
-        self.gen_len = 128
+        self.gen_len = 256
         self.spec = True
         self.dr = False
         self.target_gen = True
@@ -343,7 +383,10 @@ class InferenceCLI:
       results = {}
       # tokenize once outside loop
       if self.chat:
-        prompt_wrap = self.tokenizer.apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True, tokenize=False)
+        prompt_wrap = self.tokenizer.apply_chat_template([{"role": "user", "content": prompt}],
+                                                 add_generation_prompt=True, 
+                                                 tokenize=False,
+                                                 enable_thinking=False)
       else:
         prompt_wrap = prompt
       tokenized = self.tokenizer(prompt_wrap, return_tensors="pt").input_ids[0].tolist()
@@ -394,7 +437,7 @@ class InferenceCLI:
     def _load_models(self):
         # Target model
         default_target = "meta-llama/Llama-3.2-3B-Instruct"
-        target_quantize = QuantoConfig(weights="int8")  # QuantoConfig(weights="int8")  None
+        # target_quantize = QuantoConfig(weights="int8")  # QuantoConfig(weights="int8")  None
 
         # Drafter model
         default_drafter = "meta-llama/Llama-3.2-1B-Instruct"
@@ -408,7 +451,7 @@ class InferenceCLI:
 
         self.target = AutoModelForCausalLM.from_pretrained(
             target_model,
-            quantization_config=target_quantize,
+            # quantization_config=target_quantize,
             device_map= self.device,
             trust_remote_code=True,
         )
@@ -427,7 +470,7 @@ class InferenceCLI:
         )
         self.drafter.eval()
 
-        self.end_tokens = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")] # "<|eot_id|>" is the end of turn token for Llama model.
+        self.end_tokens = [self.tokenizer.eos_token_id] # "<|eot_id|>" is the end of turn token for Llama model.
 
 
 
@@ -495,7 +538,10 @@ class InferenceCLI:
     
     def _infer(self, prefix: str):
         if self.chat:
-            prefix = self.tokenizer.apply_chat_template([{"role": "user", "content": prefix}], add_generation_prompt=True, tokenize=False)
+            prefix = self.tokenizer.apply_chat_template([{"role": "user", "content": prefix}],
+                                                        add_generation_prompt=True,
+                                                        tokenize=False,
+                                                        enable_thinking=False)
 
         tokenized = self.tokenizer(prefix, return_tensors="pt").input_ids[0].tolist()
         spec_throughput = 0.0
@@ -584,9 +630,17 @@ class InferenceCLI:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Running SPADE CLI")
     parser.add_argument("--device", type=str, default="cuda", help="Device to use for inference")
+    parser.add_argument("--target_model", type=str, default="llama-3b",
+                    choices=ModelsCatalog.list_models(),
+                    help=f"Target model key. Choices: {', '.join(ModelsCatalog.list_models())}")
+    parser.add_argument("--drafter_model", type=str, default="llama-1b",
+                    choices=ModelsCatalog.list_models(),
+                    help=f"Drafter model key. Choices: {', '.join(ModelsCatalog.list_models())}")
+
     args, unknown = parser.parse_known_args()
 
-    cli = InferenceCLI(device=args.device)
+    cli = InferenceCLI(device=args.device, target_model=ModelsCatalog.model_id(args.target_model),
+                   drafter_model=ModelsCatalog.model_id(args.drafter_model))
 
     print("Models loaded. Commands at manager prompt:")
     print("  start   -> start interactive chat (type /quit inside chat to stop chat but keep models loaded)")
