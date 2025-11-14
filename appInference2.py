@@ -24,13 +24,40 @@
 
 # !pip install rich tqdm termcolor colorama "tokenizers>=0.19.1" "torch>=2.3.0" "transformers>=4.41.1" "accelerate>=0.30.1" "bitsandbytes>=0.43.1" optimum-quanto
 import random, time, math, os
+import streamlit as st
 from typing import Dict, List, Optional
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 import warnings
 warnings.filterwarnings('ignore')
 
-# huggingface-cli login
+# ===== Hugging Face authentication =====
+# Place this block right after: warnings.filterwarnings('ignore')
+
+from huggingface_hub import login
+
+# Prefer env var for CLI/local use
+HF_TOKEN = os.environ.get("HF_TOKEN")
+
+# If running under Streamlit (Cloud), prefer st.secrets if available
+try:
+    import streamlit as _st  # use a short name to avoid clobbering st if already used
+    HF_TOKEN = HF_TOKEN or _st.secrets.get("HF_TOKEN")
+except Exception:
+    # Not running inside Streamlit or streamlit not installed — continue using env var if provided
+    pass
+
+if HF_TOKEN:
+    try:
+        login(token=HF_TOKEN)
+        print("[green]Hugging Face authenticated.[/green]")
+    except Exception as e:
+        # Show helpful error but don't crash the whole module import
+        print(f"[red]Hugging Face login failed:[/red] {e}")
+else:
+    print("[yellow]Warning: HF_TOKEN not set (env var or st.secrets). Accessing gated models will cause 401 errors.[/yellow]")
+# =================================================
+
 
 ''' models catalog'''
 class ModelsCatalog:
