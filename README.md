@@ -5,6 +5,7 @@
 SPADE is a distributed inference framework that combines speculative decoding across edge and cloud to deliver accurate, low-cost generation without retraining. A compact *drafter* on the edge proposes candidate tokens while a larger *verifier* in the cloud validates them in parallel. Accepted tokens are kept locally; only rejected tokens trigger the cloud verifier — reducing cloud queries and cost while keeping model output quality.
 
 ---
+![Demo](assets/spade.gif)
 
 ## Key features
 
